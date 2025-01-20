@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2021, RT-Thread Development Team
+ * Copyright (c) 2006-2024, RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -7,6 +7,7 @@
  * Date             Author              Notes
  * 2021-07-29       KyleChan            first version
  * 2022-01-19       Sherman             add PIN2IRQX_TABLE
+ * 2025-01-13       newflydd            pin_get for RZ
  */
 
 #include <drv_gpio.h>
@@ -111,9 +112,10 @@ static void ra_pin_map_init(void)
 }
 #endif  /* R_ICU_H */
 
-static void ra_pin_mode(rt_device_t dev, rt_base_t pin, rt_base_t mode)
+static void ra_pin_mode(rt_device_t dev, rt_base_t pin, rt_uint8_t mode)
 {
     fsp_err_t err;
+
     /* Initialize the IOPORT module and configure the pins */
     err = R_IOPORT_Open(&g_ioport_ctrl, &g_bsp_pin_cfg);
 
@@ -126,7 +128,7 @@ static void ra_pin_mode(rt_device_t dev, rt_base_t pin, rt_base_t mode)
     switch (mode)
     {
     case PIN_MODE_OUTPUT:
-        err = R_IOPORT_PinCfg(&g_ioport_ctrl, pin, BSP_IO_DIRECTION_OUTPUT);
+        err = R_IOPORT_PinCfg(&g_ioport_ctrl, (bsp_io_port_pin_t)pin, BSP_IO_DIRECTION_OUTPUT);
         if (err != FSP_SUCCESS)
         {
             LOG_E("PIN_MODE_OUTPUT configuration failed");
@@ -135,7 +137,7 @@ static void ra_pin_mode(rt_device_t dev, rt_base_t pin, rt_base_t mode)
         break;
 
     case PIN_MODE_INPUT:
-        err = R_IOPORT_PinCfg(&g_ioport_ctrl, pin, BSP_IO_DIRECTION_INPUT);
+        err = R_IOPORT_PinCfg(&g_ioport_ctrl, (bsp_io_port_pin_t)pin, BSP_IO_DIRECTION_INPUT);
         if (err != FSP_SUCCESS)
         {
             LOG_E("PIN_MODE_INPUT configuration failed");
@@ -144,7 +146,7 @@ static void ra_pin_mode(rt_device_t dev, rt_base_t pin, rt_base_t mode)
         break;
 
     case PIN_MODE_OUTPUT_OD:
-        err = R_IOPORT_PinCfg(&g_ioport_ctrl, pin, IOPORT_CFG_NMOS_ENABLE);
+        err = R_IOPORT_PinCfg(&g_ioport_ctrl, (bsp_io_port_pin_t)pin, IOPORT_CFG_NMOS_ENABLE);
         if (err != FSP_SUCCESS)
         {
             LOG_E("PIN_MODE_OUTPUT_OD configuration failed");
@@ -154,7 +156,7 @@ static void ra_pin_mode(rt_device_t dev, rt_base_t pin, rt_base_t mode)
     }
 }
 
-static void ra_pin_write(rt_device_t dev, rt_base_t pin, rt_base_t value)
+static void ra_pin_write(rt_device_t dev, rt_base_t pin, rt_uint8_t value)
 {
     bsp_io_level_t level = BSP_IO_LEVEL_HIGH;
 
@@ -164,21 +166,30 @@ static void ra_pin_write(rt_device_t dev, rt_base_t pin, rt_base_t value)
     }
 
     R_BSP_PinAccessEnable();
+#ifdef SOC_SERIES_R9A07G0
+    R_IOPORT_PinWrite(&g_ioport_ctrl, (bsp_io_port_pin_t)pin, (bsp_io_level_t)level);
+#else
     R_BSP_PinWrite(pin, level);
+#endif
     R_BSP_PinAccessDisable();
 }
 
-static int ra_pin_read(rt_device_t dev, rt_base_t pin)
+static rt_ssize_t ra_pin_read(rt_device_t dev, rt_base_t pin)
 {
     if ((pin > RA_MAX_PIN_VALUE) || (pin < RA_MIN_PIN_VALUE))
     {
-        LOG_E("GPIO pin value is illegal");
-        return -RT_ERROR;
+        return -RT_EINVAL;
     }
+#ifdef SOC_SERIES_R9A07G0
+    bsp_io_level_t io_level;
+    R_IOPORT_PinRead(&g_ioport_ctrl, (bsp_io_port_pin_t)pin, &io_level);
+    return io_level;
+#else
     return R_BSP_PinRead(pin);
+#endif
 }
 
-static rt_err_t ra_pin_irq_enable(struct rt_device *device, rt_base_t pin, rt_uint32_t enabled)
+static rt_err_t ra_pin_irq_enable(struct rt_device *device, rt_base_t pin, rt_uint8_t enabled)
 {
 #ifdef R_ICU_H
     rt_err_t err;
@@ -230,8 +241,8 @@ static rt_err_t ra_pin_irq_enable(struct rt_device *device, rt_base_t pin, rt_ui
 #endif
 }
 
-static rt_err_t ra_pin_attach_irq(struct rt_device *device, rt_int32_t pin,
-                                  rt_uint32_t mode, void (*hdr)(void *args), void *args)
+static rt_err_t ra_pin_attach_irq(struct rt_device *device, rt_base_t pin,
+                                  rt_uint8_t   mode, void (*hdr)(void *args), void *args)
 {
 #ifdef R_ICU_H
     rt_int32_t irqx = ra_pin_get_irqx(pin);
@@ -264,7 +275,7 @@ static rt_err_t ra_pin_attach_irq(struct rt_device *device, rt_int32_t pin,
 #endif
 }
 
-static rt_err_t ra_pin_dettach_irq(struct rt_device *device, rt_int32_t pin)
+static rt_err_t ra_pin_dettach_irq(struct rt_device *device, rt_base_t pin)
 {
 #ifdef R_ICU_H
     rt_int32_t irqx = ra_pin_get_irqx(pin);
@@ -294,29 +305,31 @@ static rt_err_t ra_pin_dettach_irq(struct rt_device *device, rt_int32_t pin)
 
 static rt_base_t ra_pin_get(const char *name)
 {
-    int pin_number = -1, port = -1, pin = -1;
-    if (rt_strlen(name) != 4)
-        return -1;
-    if ((name[0] == 'P') || (name[0] == 'p'))
+#ifdef SOC_FAMILY_RENESAS_RZ
+    /* RZ series: use "PXX_X" format, like "P01_1" */
+    if ((rt_strlen(name) == 5) &&
+        ((name[0] == 'P') || (name[0] == 'p')) &&
+        (name[3] == '_') &&
+        ('0' <= (int) name[1] && (int) name[1] <= '1') &&
+        ('0' <= (int) name[2] && (int) name[2] <= '9') &&
+        ('0' <= (int) name[4] && (int) name[4] <= '7'))
     {
-        if ('0' <= (int)name[1] && (int)name[1] <= '9')
-        {
-            port = ((int)name[1] - 48) * 16 * 16;
-            if ('0' <= (int)name[2] && (int)name[2] <= '9')
-            {
-                if ('0' <= (int)name[3] && (int)name[3] <= '9')
-                {
-                    pin = ((int)name[2] - 48) * 10;
-                    pin += (int)name[3] - 48;
-                    pin_number = port + pin;
-                }
-                else return -1;
-            }
-            else return -1;
-        }
-        else return -1;
+        return (((int) name[1] - '0') * 10 + ((int) name[2] - '0')) * 0x100 + ((int) name[4] - '0');
     }
-    return pin_number;
+    LOG_W("Invalid pin expression, use `PXX_X` format like `P01_1`");
+#else
+    /* RA series: use "PXXX" format, like "P101"*/
+    if ((rt_strlen(name) == 4) &&
+        (name[0] == 'P' || name[0] == 'p') &&
+        (name[1] >= '0' && name[1] <= '9') &&
+        (name[2] >= '0' && name[1] <= '9') &&
+        (name[3] >= '0' && name[1] <= '9'))
+    {
+        return (name[1] - '0') * 0x100 + (name[2] - '0') * 10 + (name[3] - '0');
+    }
+    LOG_W("Invalid pin expression, use `PXXX` format like `P101`");
+#endif
+    return -RT_ERROR;
 }
 
 const static struct rt_pin_ops _ra_pin_ops =
@@ -336,6 +349,7 @@ int rt_hw_pin_init(void)
     ra_irq_tab_init();
     ra_pin_map_init();
 #endif
+
     return rt_device_pin_register("pin", &_ra_pin_ops, RT_NULL);
 }
 

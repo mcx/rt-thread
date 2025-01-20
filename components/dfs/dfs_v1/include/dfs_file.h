@@ -22,22 +22,22 @@ struct rt_pollreq;
 
 struct dfs_file_ops
 {
-    int (*open)     (struct dfs_fd *fd);
-    int (*close)    (struct dfs_fd *fd);
-    int (*ioctl)    (struct dfs_fd *fd, int cmd, void *args);
-    int (*read)     (struct dfs_fd *fd, void *buf, size_t count);
-    int (*write)    (struct dfs_fd *fd, const void *buf, size_t count);
-    int (*flush)    (struct dfs_fd *fd);
-    int (*lseek)    (struct dfs_fd *fd, off_t offset);
-    int (*getdents) (struct dfs_fd *fd, struct dirent *dirp, uint32_t count);
+    int (*open)     (struct dfs_file *fd);
+    int (*close)    (struct dfs_file *fd);
+    int (*ioctl)    (struct dfs_file *fd, int cmd, void *args);
+    ssize_t (*read)     (struct dfs_file *fd, void *buf, size_t count);
+    ssize_t (*write)    (struct dfs_file *fd, const void *buf, size_t count);
+    int (*flush)    (struct dfs_file *fd);
+    off_t (*lseek)    (struct dfs_file *fd, off_t offset);
+    int (*getdents) (struct dfs_file *fd, struct dirent *dirp, uint32_t count);
 
-    int (*poll)     (struct dfs_fd *fd, struct rt_pollreq *req);
+    int (*poll)     (struct dfs_file *fd, struct rt_pollreq *req);
 };
 
 /* file descriptor */
 #define DFS_FD_MAGIC     0xfdfd
 
-struct dfs_fnode
+struct dfs_vnode
 {
     uint16_t type;               /* Type (regular or socket) */
 
@@ -54,16 +54,18 @@ struct dfs_fnode
     void *data;                  /* Specific file system data */
 };
 
-struct dfs_fd
+struct dfs_file
 {
     uint16_t magic;              /* file descriptor magic number */
     uint32_t flags;              /* Descriptor flags */
     int ref_count;               /* Descriptor reference count */
     off_t    pos;                /* Current file position */
-    struct dfs_fnode *vnode;     /* file node struct */
+    struct dfs_vnode *vnode;     /* file node struct */
     void *data;                  /* Specific fd data */
 };
+#define DFS_FILE_POS(dfs_file) ((dfs_file)->pos)
 
+#ifdef RT_USING_SMART
 struct dfs_mmap2_args
 {
     void *addr;
@@ -72,26 +74,31 @@ struct dfs_mmap2_args
     int flags;
     off_t pgoffset;
 
+    struct rt_lwp *lwp;
     void *ret;
 };
+#endif
 
-void dfs_fnode_mgr_init(void);
+void dfs_vnode_mgr_init(void);
+int dfs_vnode_init(struct dfs_vnode *vnode, int type, const struct dfs_file_ops *fops);
+
 int dfs_file_is_open(const char *pathname);
-int dfs_file_open(struct dfs_fd *fd, const char *path, int flags);
-int dfs_file_close(struct dfs_fd *fd);
-int dfs_file_ioctl(struct dfs_fd *fd, int cmd, void *args);
-int dfs_file_read(struct dfs_fd *fd, void *buf, size_t len);
-int dfs_file_getdents(struct dfs_fd *fd, struct dirent *dirp, size_t nbytes);
+int dfs_file_open(struct dfs_file *fd, const char *path, int flags);
+int dfs_file_close(struct dfs_file *fd);
+int dfs_file_ioctl(struct dfs_file *fd, int cmd, void *args);
+ssize_t dfs_file_read(struct dfs_file *fd, void *buf, size_t len);
+int dfs_file_getdents(struct dfs_file *fd, struct dirent *dirp, size_t nbytes);
 int dfs_file_unlink(const char *path);
-int dfs_file_write(struct dfs_fd *fd, const void *buf, size_t len);
-int dfs_file_flush(struct dfs_fd *fd);
-int dfs_file_lseek(struct dfs_fd *fd, off_t offset);
+ssize_t dfs_file_write(struct dfs_file *fd, const void *buf, size_t len);
+int dfs_file_flush(struct dfs_file *fd);
+off_t dfs_file_lseek(struct dfs_file *fd, off_t offset);
 
 int dfs_file_stat(const char *path, struct stat *buf);
 int dfs_file_rename(const char *oldpath, const char *newpath);
-int dfs_file_ftruncate(struct dfs_fd *fd, off_t length);
-int dfs_file_mmap2(struct dfs_fd *fd, struct dfs_mmap2_args *mmap2);
-
+int dfs_file_ftruncate(struct dfs_file *fd, off_t length);
+#ifdef RT_USING_SMART
+int dfs_file_mmap2(struct dfs_file *fd, struct dfs_mmap2_args *mmap2);
+#endif
 /* 0x5254 is just a magic number to make these relatively unique ("RT") */
 #define RT_FIOFTRUNCATE  0x52540000U
 #define RT_FIOGETADDR    0x52540001U

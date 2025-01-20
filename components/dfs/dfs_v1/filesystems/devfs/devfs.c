@@ -39,7 +39,7 @@ int dfs_device_fs_statfs(struct dfs_filesystem *fs, struct statfs *buf)
     return RT_EOK;
 }
 
-int dfs_device_fs_ioctl(struct dfs_fd *file, int cmd, void *args)
+int dfs_device_fs_ioctl(struct dfs_file *file, int cmd, void *args)
 {
     rt_err_t result;
     rt_device_t dev_id;
@@ -61,7 +61,7 @@ int dfs_device_fs_ioctl(struct dfs_fd *file, int cmd, void *args)
     return result;
 }
 
-int dfs_device_fs_read(struct dfs_fd *file, void *buf, size_t count)
+ssize_t dfs_device_fs_read(struct dfs_file *file, void *buf, size_t count)
 {
     int result;
     rt_device_t dev_id;
@@ -82,7 +82,7 @@ int dfs_device_fs_read(struct dfs_fd *file, void *buf, size_t count)
     return result;
 }
 
-int dfs_device_fs_write(struct dfs_fd *file, const void *buf, size_t count)
+ssize_t dfs_device_fs_write(struct dfs_file *file, const void *buf, size_t count)
 {
     int result;
     rt_device_t dev_id;
@@ -103,7 +103,7 @@ int dfs_device_fs_write(struct dfs_fd *file, const void *buf, size_t count)
     return result;
 }
 
-int dfs_device_fs_close(struct dfs_fd *file)
+int dfs_device_fs_close(struct dfs_file *file)
 {
     rt_err_t result;
     rt_device_t dev_id;
@@ -144,7 +144,7 @@ int dfs_device_fs_close(struct dfs_fd *file)
     return -EIO;
 }
 
-int dfs_device_fs_open(struct dfs_fd *file)
+int dfs_device_fs_open(struct dfs_file *file)
 {
     rt_err_t result;
     rt_device_t device;
@@ -286,11 +286,10 @@ int dfs_device_fs_unlink(struct dfs_filesystem *fs, const char *path)
 
 int dfs_device_fs_stat(struct dfs_filesystem *fs, const char *path, struct stat *st)
 {
+    st->st_dev = (dev_t)((size_t)dfs_filesystem_lookup(fs->path));
     /* stat root directory */
     if ((path[0] == '/') && (path[1] == '\0'))
     {
-        st->st_dev = 0;
-
         st->st_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH |
                       S_IWUSR | S_IWGRP | S_IWOTH;
         st->st_mode &= ~S_IFREG;
@@ -308,8 +307,6 @@ int dfs_device_fs_stat(struct dfs_filesystem *fs, const char *path, struct stat 
         dev_id = rt_device_find(&path[1]);
         if (dev_id != RT_NULL)
         {
-            st->st_dev = 0;
-
             st->st_mode = S_IRUSR | S_IRGRP | S_IROTH |
                           S_IWUSR | S_IWGRP | S_IWOTH;
 
@@ -334,7 +331,7 @@ int dfs_device_fs_stat(struct dfs_filesystem *fs, const char *path, struct stat 
     return -ENOENT;
 }
 
-int dfs_device_fs_getdents(struct dfs_fd *file, struct dirent *dirp, uint32_t count)
+int dfs_device_fs_getdents(struct dfs_file *file, struct dirent *dirp, uint32_t count)
 {
     rt_uint32_t index;
     rt_object_t object;
@@ -373,7 +370,7 @@ int dfs_device_fs_getdents(struct dfs_fd *file, struct dirent *dirp, uint32_t co
     return index * sizeof(struct dirent);
 }
 
-static int dfs_device_fs_poll(struct dfs_fd *fd, struct rt_pollreq *req)
+static int dfs_device_fs_poll(struct dfs_file *fd, struct rt_pollreq *req)
 {
     int mask = 0;
 

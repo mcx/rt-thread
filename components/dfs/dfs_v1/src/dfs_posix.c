@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2021, RT-Thread Development Team
+ * Copyright (c) 2006-2024 RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -20,23 +20,32 @@
 
 /**
  * @addtogroup FsPosixApi
+ * @{
  */
-
-/*@{*/
 
 /**
  * this function is a POSIX compliant version, which will open a file and
  * return a file descriptor according specified flags.
  *
  * @param file the path name of file.
- * @param flags the file open flags.
+ * @param flags the file open flags. Common values include:
+ *     - Access modes (mutually exclusive):
+ *         - `O_RDONLY`: Open for read-only access.
+ *         - `O_WRONLY`: Open for write-only access.
+ *         - `O_RDWR`: Open for both reading and writing.
+ *     - File status flags (can be combined with bitwise OR `|`):
+ *         - `O_CREAT`: Create the file if it does not exist. Requires a `mode` argument.
+ *         - `O_TRUNC`: Truncate the file to zero length if it already exists.
+ *         - `O_APPEND`: Append writes to the end of the file.
+ *         - `O_EXCL`: Ensure that `O_CREAT` creates the file exclusively.
+ *         - Other platform-specific flags
  *
  * @return the non-negative integer on successful open, others for failed.
  */
 int open(const char *file, int flags, ...)
 {
     int fd, result;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     /* allocate a fd */
     fd = fd_new();
@@ -62,6 +71,69 @@ int open(const char *file, int flags, ...)
     return fd;
 }
 RTM_EXPORT(open);
+
+#ifndef AT_FDCWD
+#define AT_FDCWD (-100)
+#endif
+
+/**
+ * @brief Opens a file relative to a directory file descriptor.
+ *
+ * @param dirfd The file descriptor of the directory to base the relative path on.
+ * @param pathname The path to the file to be opened, relative to the directory specified by `dirfd`.
+ *                 Can be an absolute path (in which case `dirfd` is ignored).
+ * @param flags File access and status flags (e.g., `O_RDONLY`, `O_WRONLY`, `O_CREAT`).
+ *
+ * @return On success, returns a new file descriptor for the opened file.
+ *         On failure, returns `-1` and sets `errno` to indicate the error.
+ *
+ * @note When using relative paths, ensure `dirfd` is a valid directory descriptor.
+ *       When `pathname` is absolute, the `dirfd` argument is ignored.
+ *
+ */
+int openat(int dirfd, const char *path, int flag, ...)
+{
+    struct dfs_file *d;
+    char *fullpath;
+    int fd;
+
+    if (!path)
+    {
+        rt_set_errno(-EBADF);
+        return -1;
+    }
+
+    fullpath = (char*)path;
+
+    if (path[0] != '/')
+    {
+        if (dirfd != AT_FDCWD)
+        {
+            d = fd_get(dirfd);
+            if (!d || !d->vnode)
+            {
+                rt_set_errno(-EBADF);
+                return -1;
+            }
+
+            fullpath = dfs_normalize_path(d->vnode->fullpath, path);
+            if (!fullpath)
+            {
+                rt_set_errno(-ENOMEM);
+                return -1;
+            }
+        }
+    }
+
+    fd = open(fullpath, flag, 0);
+
+    if (fullpath != path)
+    {
+        rt_free(fullpath);
+    }
+
+    return fd;
+}
 
 /**
  * this function is a POSIX compliant version,
@@ -89,7 +161,7 @@ RTM_EXPORT(creat);
 int close(int fd)
 {
     int result;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     d = fd_get(fd);
     if (d == NULL)
@@ -100,6 +172,7 @@ int close(int fd)
     }
 
     result = dfs_file_close(d);
+    fd_release(fd);
 
     if (result < 0)
     {
@@ -107,8 +180,6 @@ int close(int fd)
 
         return -1;
     }
-
-    fd_release(fd);
 
     return 0;
 }
@@ -132,7 +203,7 @@ ssize_t read(int fd, void *buf, size_t len)
 #endif
 {
     int result;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     /* get the fd */
     d = fd_get(fd);
@@ -172,7 +243,7 @@ ssize_t write(int fd, const void *buf, size_t len)
 #endif
 {
     int result;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     /* get the fd */
     d = fd_get(fd);
@@ -196,19 +267,27 @@ ssize_t write(int fd, const void *buf, size_t len)
 RTM_EXPORT(write);
 
 /**
- * this function is a POSIX compliant version, which will seek the offset for
+ * this function is a POSIX compliant version, which will Reposition the file offset for
  * an open file descriptor.
  *
- * @param fd the file descriptor.
- * @param offset the offset to be seeked.
- * @param whence the directory of seek.
+ * The `lseek` function sets the file offset for the file descriptor `fd`
+ * to a new value, determined by the `offset` and `whence` parameters.
+ * It can be used to seek to specific positions in a file for reading or writing.
  *
- * @return the current read/write position in the file, or -1 on failed.
+ * @param fd the file descriptor.
+ * @param offset The offset, in bytes, to set the file position.
+ *               The meaning of `offset` depends on the value of `whence`.
+ * @param whence the directive of seek. It can be one of:
+ *               - `SEEK_SET`: Set the offset to `offset` bytes from the beginning of the file.
+ *               - `SEEK_CUR`: Set the offset to its current location plus `offset` bytes.
+ *               - `SEEK_END`: Set the offset to the size of the file plus `offset` bytes.
+ *
+ * @return the resulting read/write position in the file, or -1 on failed.
  */
 off_t lseek(int fd, off_t offset, int whence)
 {
     int result;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     d = fd_get(fd);
     if (d == NULL)
@@ -260,8 +339,8 @@ RTM_EXPORT(lseek);
  * this function is a POSIX compliant version, which will rename old file name
  * to new file name.
  *
- * @param old the old file name.
- * @param new the new file name.
+ * @param old_file the old file name.
+ * @param new_file the new file name.
  *
  * @return 0 on successful, -1 on failed.
  *
@@ -342,7 +421,7 @@ RTM_EXPORT(stat);
  */
 int fstat(int fildes, struct stat *buf)
 {
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     /* get the fd */
     d = fd_get(fildes);
@@ -370,7 +449,7 @@ RTM_EXPORT(fstat);
 int fsync(int fildes)
 {
     int ret;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     /* get the fd */
     d = fd_get(fildes);
@@ -391,9 +470,15 @@ RTM_EXPORT(fsync);
  * control functions on devices.
  *
  * @param fildes the file description
- * @param cmd the specified command
- * @param data represents the additional information that is needed by this
- * specific device to perform the requested function.
+ * @param cmd the specified command, Common values include:
+ *     - `F_DUPFD`: Duplicate a file descriptor.
+ *     - `F_GETFD`: Get the file descriptor flags.
+ *     - `F_SETFD`: Set the file descriptor flags.
+ *     - `F_GETFL`: Get the file status flags.
+ *     - `F_SETFL`: Set the file status flags.
+ * @param ... represents the additional information that is needed by this
+ * specific device to perform the requested function. For example:
+ *     - When `cmd` is `F_SETFL`, an additional integer argument specifies the new status flags.
  *
  * @return 0 on successful completion. Otherwise, -1 shall be returned and errno
  * set to indicate the error.
@@ -401,7 +486,7 @@ RTM_EXPORT(fsync);
 int fcntl(int fildes, int cmd, ...)
 {
     int ret = -1;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     /* get the fd */
     d = fd_get(fildes);
@@ -434,7 +519,7 @@ RTM_EXPORT(fcntl);
  *
  * @param fildes the file description
  * @param cmd the specified command
- * @param data represents the additional information that is needed by this
+ * @param ... represents the additional information that is needed by this
  * specific device to perform the requested function.
  *
  * @return 0 on successful completion. Otherwise, -1 shall be returned and errno
@@ -467,7 +552,7 @@ RTM_EXPORT(ioctl);
 int ftruncate(int fd, off_t length)
 {
     int result;
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     d = fd_get(fd);
     if (d == NULL)
@@ -531,7 +616,7 @@ RTM_EXPORT(statfs);
  */
 int fstatfs(int fildes, struct statfs *buf)
 {
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     /* get the fd */
     d = fd_get(fildes);
@@ -550,14 +635,14 @@ RTM_EXPORT(fstatfs);
  * this function is a POSIX compliant version, which will make a directory
  *
  * @param path the directory path to be made.
- * @param mode
+ * @param mode The permission mode for the new directory (unused here, can be set to 0).
  *
  * @return 0 on successful, others on failed.
  */
 int mkdir(const char *path, mode_t mode)
 {
     int fd;
-    struct dfs_fd *d;
+    struct dfs_file *d;
     int result;
 
     fd = fd_new();
@@ -619,7 +704,7 @@ RTM_EXPORT(rmdir);
  */
 DIR *opendir(const char *name)
 {
-    struct dfs_fd *d;
+    struct dfs_file *d;
     int fd, result;
     DIR *t;
 
@@ -675,7 +760,7 @@ RTM_EXPORT(opendir);
 struct dirent *readdir(DIR *d)
 {
     int result;
-    struct dfs_fd *fd;
+    struct dfs_file *fd;
 
     fd = fd_get(d->fd);
     if (fd == NULL)
@@ -722,7 +807,7 @@ RTM_EXPORT(readdir);
  */
 long telldir(DIR *d)
 {
-    struct dfs_fd *fd;
+    struct dfs_file *fd;
     long result;
 
     fd = fd_get(d->fd);
@@ -748,7 +833,7 @@ RTM_EXPORT(telldir);
  */
 void seekdir(DIR *d, long offset)
 {
-    struct dfs_fd *fd;
+    struct dfs_file *fd;
 
     fd = fd_get(d->fd);
     if (fd == NULL)
@@ -772,7 +857,7 @@ RTM_EXPORT(seekdir);
  */
 void rewinddir(DIR *d)
 {
-    struct dfs_fd *fd;
+    struct dfs_file *fd;
 
     fd = fd_get(d->fd);
     if (fd == NULL)
@@ -799,7 +884,7 @@ RTM_EXPORT(rewinddir);
 int closedir(DIR *d)
 {
     int result;
-    struct dfs_fd *fd;
+    struct dfs_file *fd;
 
     fd = fd_get(d->fd);
     if (fd == NULL)
@@ -921,8 +1006,6 @@ int access(const char *path, int amode)
  * working directory.
  *
  * @param buf the current directory.
- *
- * @return null.
  */
 void setcwd(char *buf)
 {
@@ -979,4 +1062,4 @@ char *getcwd(char *buf, size_t size)
 }
 RTM_EXPORT(getcwd);
 
-/* @} */
+/**@}*/

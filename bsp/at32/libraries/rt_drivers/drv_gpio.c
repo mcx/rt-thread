@@ -7,6 +7,10 @@
  * Date           Author        Notes
  * 2022-05-16     shelton       first version
  * 2023-01-31     shelton       add support f421/f425
+ * 2023-04-08     shelton       add support f423
+ * 2023-10-18     shelton       add support f402/f405
+ * 2024-04-12     shelton       add support a403a and a423
+ * 2024-08-30     shelton       add support m412 and m416
  */
 
 #include "drv_common.h"
@@ -19,7 +23,10 @@
 #define PIN_NO(pin)                     ((uint8_t)((pin) & 0xFu))
 
 #if defined (SOC_SERIES_AT32F435) || defined (SOC_SERIES_AT32F437) || \
-    defined (SOC_SERIES_AT32F421) || defined (SOC_SERIES_AT32F425)
+    defined (SOC_SERIES_AT32F421) || defined (SOC_SERIES_AT32F425) || \
+    defined (SOC_SERIES_AT32F423) || defined (SOC_SERIES_AT32F402) || \
+    defined (SOC_SERIES_AT32F405) || defined (SOC_SERIES_AT32A423) || \
+    defined (SOC_SERIES_AT32M412) || defined (SOC_SERIES_AT32M416)
 #define PIN_ATPORTSOURCE(pin)           (scfg_port_source_type)((uint8_t)(((pin) & 0xF0u) >> 4))
 #define PIN_ATPINSOURCE(pin)            (scfg_pins_source_type)((uint8_t)((pin) & 0xFu))
 #else
@@ -180,7 +187,7 @@ static void at32_pin_write(rt_device_t dev, rt_base_t pin, rt_uint8_t value)
     gpio_bits_write(gpio_port, gpio_pin, (confirm_state)value);
 }
 
-static rt_int8_t at32_pin_read(rt_device_t dev, rt_base_t pin)
+static rt_ssize_t at32_pin_read(rt_device_t dev, rt_base_t pin)
 {
     gpio_type *gpio_port;
     uint16_t gpio_pin;
@@ -194,6 +201,11 @@ static rt_int8_t at32_pin_read(rt_device_t dev, rt_base_t pin)
         gpio_pin     =  PIN_ATPIN(pin);
         value = gpio_input_data_bit_read(gpio_port, gpio_pin);
     }
+    else
+    {
+        return -RT_EINVAL;
+    }
+
     return value;
 }
 
@@ -258,10 +270,10 @@ static void at32_pin_mode(rt_device_t dev, rt_base_t pin, rt_uint8_t mode)
 
 rt_inline rt_int32_t bit2bitno(rt_uint32_t bit)
 {
-    int i;
+    rt_int32_t i;
     for (i = 0; i < 32; i++)
     {
-        if ((0x01 << i) == bit)
+        if (((rt_uint32_t)0x01 << i) == bit)
         {
             return i;
         }
@@ -423,7 +435,10 @@ static rt_err_t at32_pin_irq_enable(struct rt_device *device, rt_base_t pin,
         gpio_init(gpio_port, &gpio_init_struct);
 
 #if defined (SOC_SERIES_AT32F435) || defined (SOC_SERIES_AT32F437) || \
-    defined (SOC_SERIES_AT32F421) || defined (SOC_SERIES_AT32F425)
+    defined (SOC_SERIES_AT32F421) || defined (SOC_SERIES_AT32F425) || \
+    defined (SOC_SERIES_AT32F423) || defined (SOC_SERIES_AT32F402) || \
+    defined (SOC_SERIES_AT32F405) || defined (SOC_SERIES_AT32A423) || \
+    defined (SOC_SERIES_AT32M412) || defined (SOC_SERIES_AT32M416)
         scfg_exint_line_config(PIN_ATPORTSOURCE(pin), PIN_ATPINSOURCE(pin));
 #else
         gpio_exint_line_config(PIN_ATPORTSOURCE(pin), PIN_ATPINSOURCE(pin));
@@ -706,7 +721,10 @@ int rt_hw_pin_init(void)
 #endif
 
 #if defined (SOC_SERIES_AT32F435) || defined (SOC_SERIES_AT32F437) || \
-    defined (SOC_SERIES_AT32F421) || defined (SOC_SERIES_AT32F425)
+    defined (SOC_SERIES_AT32F421) || defined (SOC_SERIES_AT32F425) || \
+    defined (SOC_SERIES_AT32F423) || defined (SOC_SERIES_AT32F402) || \
+    defined (SOC_SERIES_AT32F405) || defined (SOC_SERIES_AT32A423) || \
+    defined (SOC_SERIES_AT32M412) || defined (SOC_SERIES_AT32M416)
     crm_periph_clock_enable(CRM_SCFG_PERIPH_CLOCK, TRUE);
 #else
     crm_periph_clock_enable(CRM_IOMUX_PERIPH_CLOCK, TRUE);

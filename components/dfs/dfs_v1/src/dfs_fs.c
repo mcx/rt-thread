@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2021, RT-Thread Development Team
+ * Copyright (c) 2006-2024 RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -18,8 +18,8 @@
 
 /**
  * @addtogroup FsApi
+ * @{
  */
-/*@{*/
 
 /**
  * this function will register a file system instance to device file system.
@@ -271,7 +271,7 @@ int dfs_mount(const char   *device_name,
     /* Check if the path exists or not, raw APIs call, fixme */
     if ((strcmp(fullpath, "/") != 0) && (strcmp(fullpath, "/dev") != 0))
     {
-        struct dfs_fd fd;
+        struct dfs_file fd;
 
         fd_init(&fd);
         if (dfs_file_open(&fd, fullpath, O_RDONLY | O_DIRECTORY) < 0)
@@ -322,8 +322,8 @@ int dfs_mount(const char   *device_name,
     /* open device, but do not check the status of device */
     if (dev_id != NULL)
     {
-        if (rt_device_open(fs->dev_id,
-                           RT_DEVICE_OFLAG_RDWR) != RT_EOK)
+        if (rt_device_open(fs->dev_id, RT_DEVICE_OFLAG_RDWR) != RT_EOK &&
+            rt_device_open(fs->dev_id, RT_DEVICE_OFLAG_RDONLY) != RT_EOK)
         {
             /* The underlying device has error, clear the entry. */
             dfs_lock();
@@ -529,7 +529,8 @@ int dfs_mount_device(rt_device_t dev)
 {
   int index = 0;
 
-  if(dev == RT_NULL) {
+  if(dev == RT_NULL)
+  {
     rt_kprintf("the device is NULL to be mounted.\n");
     return -RT_ERROR;
   }
@@ -538,7 +539,8 @@ int dfs_mount_device(rt_device_t dev)
   {
     if (mount_table[index].path == NULL) break;
 
-    if(strcmp(mount_table[index].device_name, dev->parent.name) == 0) {
+    if(strcmp(mount_table[index].device_name, dev->parent.name) == 0)
+    {
       if (dfs_mount(mount_table[index].device_name,
                     mount_table[index].path,
                     mount_table[index].filesystemtype,
@@ -654,4 +656,4 @@ int df(const char *path)
 FINSH_FUNCTION_EXPORT(df, get disk free);
 #endif
 
-/* @} */
+/**@}*/

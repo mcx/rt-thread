@@ -9,8 +9,8 @@
  */
 
 #include <Arduino.h>
-#include <board.h>
 #include "pins_arduino.h"
+#include <drv_gpio.h>
 
 /*
  * {Arduino Pin, RT-Thread Pin [, Device Name, Channel]}
@@ -65,6 +65,6 @@ const pin_map_t pin_map_table[]=
     {D41, GET_PIN(A,4)},
     {D42, GET_PIN(F,10)},
     {D43, GET_PIN(I,9)},
-    {A0, RT_NULL, "adc1", 16},          /* ADC, On-Chip: internal temperature sensor, ADC_CHANNEL_TEMPSENSOR */
-    {A1, RT_NULL, "adc1", 17},          /* ADC, On-Chip: internal reference voltage, ADC_CHANNEL_VREFINT */
+    {A0, RT_NULL, "adc1", RT_ADC_INTERN_CH_VREF},   /* ADC, On-Chip: internal temperature sensor */
+    {A1, RT_NULL, "adc1", RT_ADC_INTERN_CH_TEMPER}, /* ADC, On-Chip: internal reference voltage */
 };

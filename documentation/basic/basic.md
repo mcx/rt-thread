@@ -577,11 +577,9 @@ Configuration is mainly done by modifying the file under project directory - rtc
 #define RT_USING_OVERFLOW_CHECK
 
 /* Define this macro to enable debug mode, if not defined, close.  */
-#define RT_DEBUG
-/* When debug mode is enabled: When the macro is defined as 0, the print component initialization information is turned off. When it is defined as 1, it is enabled. */
-#define RT_DEBUG_INIT 0
-/* When debug mode is enabled: When the macro is defined as 0, the print thread switching information is turned off. When it is defined as 1, it is enabled. */
-#define RT_DEBUG_THREAD 0
+#define RT_USING_DEBUG
+/* When debug mode is enabled: Define this macro to enable the print component initialization information, if not defined, close.  */
+#define RT_DEBUGING_AUTO_INIT
 
 /* Defining this macro means the use of the hook function is started, if not defined, close. */
 #define RT_USING_HOOK
@@ -671,7 +669,7 @@ Configuration is mainly done by modifying the file under project directory - rtc
 /* While turning the system FinSH: define the number of historical command lines. */
 #define FINSH_HISTORY_LINES 5
 
-/* While turning the system FinSH: define this macro to open the Tab key, if not defined, close. */
+/* While turning the system FinSH: define this macro to use symbol table in Finsh, if not defined, close. */
 #define FINSH_USING_SYMTAB
 
 /* While turning the system FinSH: define the priority of the thread. */

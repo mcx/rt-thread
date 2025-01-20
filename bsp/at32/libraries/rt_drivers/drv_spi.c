@@ -8,6 +8,10 @@
  * 2022-05-16     shelton      first version
  * 2022-11-10     shelton      support spi dma
  * 2023-01-31     shelton      add support f421/f425
+ * 2023-04-08     shelton      add support f423
+ * 2023-10-18     shelton      add support f402/f405
+ * 2024-04-12     shelton      add support a403a and a423
+ * 2024-08-30     shelton      add support m412 and m416
  */
 
 #include "drv_common.h"
@@ -61,7 +65,7 @@ static struct at32_spi_config spi_config[] = {
 
 /* private rt-thread spi ops function */
 static rt_err_t configure(struct rt_spi_device* device, struct rt_spi_configuration* configuration);
-static rt_uint32_t xfer(struct rt_spi_device* device, struct rt_spi_message* message);
+static rt_ssize_t xfer(struct rt_spi_device* device, struct rt_spi_message* message);
 
 static struct rt_spi_ops at32_spi_ops =
 {
@@ -231,6 +235,8 @@ static rt_err_t configure(struct rt_spi_device* device,
     spi_init_struct.transmission_mode = SPI_TRANSMIT_FULL_DUPLEX;
     spi_init_struct.master_slave_mode = SPI_MODE_MASTER;
     spi_init_struct.cs_mode_selection = SPI_CS_SOFTWARE_MODE;
+    /* disable spi to change transfer size */
+    spi_enable(instance->config->spi_x, FALSE);
     /* init spi */
     spi_init(instance->config->spi_x, &spi_init_struct);
 
@@ -352,7 +358,7 @@ static void _spi_polling_receive_transmit(struct at32_spi *instance, rt_uint8_t 
     }
 }
 
-static rt_uint32_t xfer(struct rt_spi_device* device, struct rt_spi_message* message)
+static rt_ssize_t xfer(struct rt_spi_device* device, struct rt_spi_message* message)
 {
     struct rt_spi_bus * at32_spi_bus = (struct rt_spi_bus *)device->bus;
     struct at32_spi *instance = (struct at32_spi *)at32_spi_bus->parent.user_data;
@@ -392,8 +398,15 @@ static rt_uint32_t xfer(struct rt_spi_device* device, struct rt_spi_message* mes
 
         /* calculate the start address */
         already_send_length = message->length - send_length - message_length;
-        send_buf = (rt_uint8_t *)message->send_buf + already_send_length;
-        recv_buf = (rt_uint8_t *)message->recv_buf + already_send_length;
+        /* avoid null pointer problems */
+        if (message->send_buf)
+        {
+            send_buf = (rt_uint8_t *)message->send_buf + already_send_length;
+        }
+        if (message->recv_buf)
+        {
+            recv_buf = (rt_uint8_t *)message->recv_buf + already_send_length;
+        }
 
         /* start once data exchange in dma mode */
         if (message->send_buf && message->recv_buf)
@@ -521,7 +534,10 @@ static void at32_spi_dma_init(struct at32_spi *instance)
         dma_flexible_config(instance->config->dma_rx->dma_x, instance->config->dma_rx->flex_channel, \
                            (dma_flexible_request_type)instance->config->dma_rx->request_id);
 #endif
-#if defined (SOC_SERIES_AT32F435) || defined (SOC_SERIES_AT32F437)
+#if defined (SOC_SERIES_AT32F435) || defined (SOC_SERIES_AT32F437) || \
+    defined (SOC_SERIES_AT32F423) || defined (SOC_SERIES_AT32F402) || \
+    defined (SOC_SERIES_AT32F405) || defined (SOC_SERIES_AT32A423) || \
+    defined (SOC_SERIES_AT32M412) || defined (SOC_SERIES_AT32M416)
         dmamux_enable(instance->config->dma_rx->dma_x, TRUE);
         dmamux_init(instance->config->dma_rx->dmamux_channel, (dmamux_requst_id_sel_type)instance->config->dma_rx->request_id);
 #endif
@@ -540,7 +556,10 @@ static void at32_spi_dma_init(struct at32_spi *instance)
         dma_flexible_config(instance->config->dma_tx->dma_x, instance->config->dma_tx->flex_channel, \
                            (dma_flexible_request_type)instance->config->dma_tx->request_id);
 #endif
-#if defined (SOC_SERIES_AT32F435) || defined (SOC_SERIES_AT32F437)
+#if defined (SOC_SERIES_AT32F435) || defined (SOC_SERIES_AT32F437) || \
+    defined (SOC_SERIES_AT32F423) || defined (SOC_SERIES_AT32F402) || \
+    defined (SOC_SERIES_AT32F405) || defined (SOC_SERIES_AT32A423) || \
+    defined (SOC_SERIES_AT32M412) || defined (SOC_SERIES_AT32M416)
         dmamux_enable(instance->config->dma_tx->dma_x, TRUE);
         dmamux_init(instance->config->dma_tx->dmamux_channel, (dmamux_requst_id_sel_type)instance->config->dma_tx->request_id);
 #endif
@@ -555,7 +574,7 @@ static void at32_spi_dma_init(struct at32_spi *instance)
     }
 }
 
-void dma_isr(struct dma_config *dma_instance)
+void spi_dma_isr(struct dma_config *dma_instance)
 {
     volatile rt_uint32_t reg_sts = 0, index = 0;
 
@@ -608,7 +627,7 @@ void SPI1_RX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI1_INDEX].dma_rx);
+    spi_dma_isr(spi_config[SPI1_INDEX].dma_rx);
 
     /* leave interrupt */
     rt_interrupt_leave();
@@ -620,7 +639,7 @@ void SPI1_TX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI1_INDEX].dma_tx);
+    spi_dma_isr(spi_config[SPI1_INDEX].dma_tx);
 
     /* leave interrupt */
     rt_interrupt_leave();
@@ -644,7 +663,7 @@ void SPI2_RX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI2_INDEX].dma_rx);
+    spi_dma_isr(spi_config[SPI2_INDEX].dma_rx);
 
     /* leave interrupt */
     rt_interrupt_leave();
@@ -656,7 +675,7 @@ void SPI2_TX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI2_INDEX].dma_tx);
+    spi_dma_isr(spi_config[SPI2_INDEX].dma_tx);
 
     /* leave interrupt */
     rt_interrupt_leave();
@@ -680,7 +699,7 @@ void SPI3_RX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI3_INDEX].dma_rx);
+    spi_dma_isr(spi_config[SPI3_INDEX].dma_rx);
 
     /* leave interrupt */
     rt_interrupt_leave();
@@ -692,7 +711,7 @@ void SPI3_TX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI3_INDEX].dma_tx);
+    spi_dma_isr(spi_config[SPI3_INDEX].dma_tx);
 
     /* leave interrupt */
     rt_interrupt_leave();
@@ -716,7 +735,7 @@ void SPI4_RX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI4_INDEX].dma_rx);
+    spi_dma_isr(spi_config[SPI4_INDEX].dma_rx);
 
     /* leave interrupt */
     rt_interrupt_leave();
@@ -728,7 +747,7 @@ void SPI4_TX_DMA_IRQHandler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-    dma_isr(spi_config[SPI4_INDEX].dma_tx);
+    spi_dma_isr(spi_config[SPI4_INDEX].dma_tx);
 
     /* leave interrupt */
     rt_interrupt_leave();

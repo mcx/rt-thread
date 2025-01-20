@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2022, RT-Thread Development Team
+ * Copyright (c) 2006-2024 RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,7 +19,7 @@
 #endif
 
 #ifdef RT_USING_POSIX_STDIO
-#include <libc.h>
+#include <posix/stdio.h>
 #endif /* RT_USING_POSIX_STDIO */
 
 /* Global variables */
@@ -39,9 +39,8 @@ static int  fd_alloc(struct dfs_fdtable *fdt, int startfd);
 
 /**
  * @addtogroup DFS
+ * @{
  */
-
-/*@{*/
 
 /**
  * this function will initialize device file system.
@@ -57,7 +56,7 @@ int dfs_init(void)
     }
 
     /* init vnode hash table */
-    dfs_fnode_mgr_init();
+    dfs_vnode_mgr_init();
 
     /* clear filesystem operations table */
     rt_memset((void *)filesystem_operation_table, 0, sizeof(filesystem_operation_table));
@@ -108,7 +107,8 @@ int dfs_init(void)
 INIT_PREV_EXPORT(dfs_init);
 
 /**
- * this function will lock device file system.
+ * @brief this function will lock device file system.
+ * this lock (fslock) is used for protecting filesystem_operation_table and filesystem_table.
  *
  * @note please don't invoke it on ISR.
  */
@@ -127,7 +127,13 @@ void dfs_lock(void)
     }
 }
 
-void dfs_fd_lock(void)
+/**
+ * @brief this function will lock file descriptors.
+ * this lock (fdlock) is used for protecting fd table (_fdtab).
+ *
+ * @note please don't invoke it on ISR.
+ */
+void dfs_file_lock(void)
 {
     rt_err_t result = -RT_EBUSY;
 
@@ -143,7 +149,7 @@ void dfs_fd_lock(void)
 }
 
 /**
- * this function will lock device file system.
+ * @brief this function will unlock device file system.
  *
  * @note please don't invoke it on ISR.
  */
@@ -152,34 +158,57 @@ void dfs_unlock(void)
     rt_mutex_release(&fslock);
 }
 
-#ifdef DFS_USING_POSIX
-
-void dfs_fd_unlock(void)
+/**
+ * @brief this function will unlock fd table.
+ */
+void dfs_file_unlock(void)
 {
     rt_mutex_release(&fdlock);
 }
 
+#ifdef DFS_USING_POSIX
+/**
+ * @brief Expand the file descriptor table to accommodate a specific file descriptor.
+ *
+ * This function ensures that the file descriptor table in the given `dfs_fdtable` structure
+ * has sufficient capacity to include the specified file descriptor `fd`. If the table
+ * needs to be expanded, it reallocates memory and initializes new slots to `NULL`.
+ *
+ * @param fdt Pointer to the `dfs_fdtable` structure representing the file descriptor table.
+ * @param fd The file descriptor that the table must accommodate.
+ * @return int
+ *         - The input file descriptor `fd` if it is within the current or newly expanded table's capacity.
+ *         - `-1` if the requested file descriptor exceeds `DFS_FD_MAX` or memory allocation fails.
+ */
 static int fd_slot_expand(struct dfs_fdtable *fdt, int fd)
 {
     int nr;
     int index;
-    struct dfs_fd **fds = NULL;
+    struct dfs_file **fds = NULL;
 
+    /* If the file descriptor is already within the current capacity, no expansion is needed.*/
     if (fd < fdt->maxfd)
     {
         return fd;
     }
+
+    /* If the file descriptor exceeds the maximum allowable limit, return an error.*/
     if (fd >= DFS_FD_MAX)
     {
         return -1;
     }
 
+    /* Calculate the new capacity, rounding up to the nearest multiple of 4.*/
     nr = ((fd + 4) & ~3);
+
+    /* Ensure the new capacity does not exceed the maximum limit.*/
     if (nr > DFS_FD_MAX)
     {
         nr = DFS_FD_MAX;
     }
-    fds = (struct dfs_fd **)rt_realloc(fdt->fds, nr * sizeof(struct dfs_fd *));
+
+    /* Attempt to reallocate the file descriptor table to the new capacity.*/
+    fds = (struct dfs_file **)rt_realloc(fdt->fds, nr * sizeof(struct dfs_file *));
     if (!fds)
     {
         return -1;
@@ -190,12 +219,23 @@ static int fd_slot_expand(struct dfs_fdtable *fdt, int fd)
     {
         fds[index] = NULL;
     }
+
+    /* Update the file descriptor table and its capacity.*/
     fdt->fds   = fds;
     fdt->maxfd = nr;
 
     return fd;
 }
 
+/**
+ * @brief Allocate a file descriptor slot starting from a specified index.
+ *
+ * @param fdt fdt Pointer to the `dfs_fdtable` structure representing the file descriptor table.
+ * @param startfd The starting index for the search for an empty slot.
+ * @return int
+ *         - The index of the first available slot if successful.
+ *         - `-1` if no slot is available or if table expansion fails
+ */
 static int fd_slot_alloc(struct dfs_fdtable *fdt, int startfd)
 {
     int idx;
@@ -220,19 +260,30 @@ static int fd_slot_alloc(struct dfs_fdtable *fdt, int startfd)
     }
     return idx;
 }
+
+/**
+ * @brief Allocate a new file descriptor and associate it with a newly allocated `struct dfs_file`.
+ *
+ * @param fdt Pointer to the `dfs_fdtable` structure representing the file descriptor table.
+ * @param startfd The starting index for searching an available file descriptor slot.
+ *
+ * @return
+ * - The index of the allocated file descriptor if successful.
+ * - `-1` if no slot is available or memory allocation fails.
+ */
 static int fd_alloc(struct dfs_fdtable *fdt, int startfd)
 {
     int idx;
-    struct dfs_fd *fd = NULL;
+    struct dfs_file *fd = NULL;
 
     idx = fd_slot_alloc(fdt, startfd);
 
-    /* allocate  'struct dfs_fd' */
+    /* allocate  'struct dfs_file' */
     if (idx < 0)
     {
         return -1;
     }
-    fd = (struct dfs_fd *)rt_calloc(1, sizeof(struct dfs_fd));
+    fd = (struct dfs_file *)rt_calloc(1, sizeof(struct dfs_file));
     if (!fd)
     {
         return -1;
@@ -256,7 +307,7 @@ int fdt_fd_new(struct dfs_fdtable *fdt)
     int idx;
 
     /* lock filesystem */
-    dfs_fd_lock();
+    dfs_file_lock();
 
     /* find an empty fd entry */
     idx = fd_alloc(fdt, DFS_STDIO_OFFSET);
@@ -267,7 +318,7 @@ int fdt_fd_new(struct dfs_fdtable *fdt)
         LOG_E("DFS fd new is failed! Could not found an empty fd entry.");
     }
 
-    dfs_fd_unlock();
+    dfs_file_unlock();
     return idx;
 }
 
@@ -289,31 +340,31 @@ int fd_new(void)
  * pointer.
  */
 
-struct dfs_fd *fdt_fd_get(struct dfs_fdtable* fdt, int fd)
+struct dfs_file *fdt_fd_get(struct dfs_fdtable* fdt, int fd)
 {
-    struct dfs_fd *d;
+    struct dfs_file *d;
 
     if (fd < 0 || fd >= (int)fdt->maxfd)
     {
         return NULL;
     }
 
-    dfs_fd_lock();
+    dfs_file_lock();
     d = fdt->fds[fd];
 
-    /* check dfs_fd valid or not */
+    /* check dfs_file valid or not */
     if ((d == NULL) || (d->magic != DFS_FD_MAGIC))
     {
-        dfs_fd_unlock();
+        dfs_file_unlock();
         return NULL;
     }
 
-    dfs_fd_unlock();
+    dfs_file_unlock();
 
     return d;
 }
 
-struct dfs_fd *fd_get(int fd)
+struct dfs_file *fd_get(int fd)
 {
     struct dfs_fdtable *fdt;
 
@@ -324,26 +375,30 @@ struct dfs_fd *fd_get(int fd)
 /**
  * @ingroup Fd
  *
- * This function will put the file descriptor.
+ * @brief This function will release the file descriptor.
+ *
+ * This function releases a file descriptor slot in the file descriptor table, decrements reference
+ * counts, and cleans up resources associated with the `dfs_file` and `dfs_vnode` structures when applicable.
+ *
  */
 void fdt_fd_release(struct dfs_fdtable* fdt, int fd)
 {
-    struct dfs_fd *fd_slot = NULL;
+    struct dfs_file *fd_slot = NULL;
 
     RT_ASSERT(fdt != NULL);
 
-    dfs_fd_lock();
+    dfs_file_lock();
 
     if ((fd < 0) || (fd >= fdt->maxfd))
     {
-        dfs_fd_unlock();
+        dfs_file_unlock();
         return;
     }
 
     fd_slot = fdt->fds[fd];
     if (fd_slot == NULL)
     {
-        dfs_fd_unlock();
+        dfs_file_unlock();
         return;
     }
     fdt->fds[fd] = NULL;
@@ -356,14 +411,19 @@ void fdt_fd_release(struct dfs_fdtable* fdt, int fd)
     /* clear this fd entry */
     if (fd_slot->ref_count == 0)
     {
-        struct dfs_fnode *vnode = fd_slot->vnode;
+        struct dfs_vnode *vnode = fd_slot->vnode;
         if (vnode)
         {
             vnode->ref_count--;
+            if(vnode->ref_count == 0)
+            {
+                rt_free(vnode);
+                fd_slot->vnode = RT_NULL;
+            }
         }
         rt_free(fd_slot);
     }
-    dfs_fd_unlock();
+    dfs_file_unlock();
 }
 
 void fd_release(int fd)
@@ -374,12 +434,26 @@ void fd_release(int fd)
     fdt_fd_release(fdt, fd);
 }
 
+/**
+ * @brief Duplicates a file descriptor.
+ *
+ * This function duplicates an existing file descriptor (`oldfd`) and returns
+ * a new file descriptor that refers to the same underlying file object.
+ *
+ * @param oldfd The file descriptor to duplicate. It must be a valid file
+ *              descriptor within the range of allocated descriptors.
+ *
+ * @return The new file descriptor if successful, or a negative value
+ *         (e.g., -1) if an error occurs.
+ *
+ * @see sys_dup2()
+ */
 rt_err_t sys_dup(int oldfd)
 {
     int newfd = -1;
     struct dfs_fdtable *fdt = NULL;
 
-    dfs_fd_lock();
+    dfs_file_lock();
     /* check old fd */
     fdt = dfs_fdtable_get();
     if ((oldfd < 0) || (oldfd >= fdt->maxfd))
@@ -399,7 +473,7 @@ rt_err_t sys_dup(int oldfd)
         fdt->fds[newfd]->ref_count++;
     }
 exit:
-    dfs_fd_unlock();
+    dfs_file_unlock();
     return newfd;
 }
 
@@ -419,7 +493,7 @@ int fd_is_open(const char *pathname)
     char *fullpath;
     unsigned int index;
     struct dfs_filesystem *fs;
-    struct dfs_fd *fd;
+    struct dfs_file *fd;
     struct dfs_fdtable *fdt;
 
     fdt = dfs_fdtable_get();
@@ -466,13 +540,30 @@ int fd_is_open(const char *pathname)
     return -1;
 }
 
+/**
+ * @brief Duplicates a file descriptor to a specified file descriptor.
+ *
+ * This function duplicates an existing file descriptor (`oldfd`) and assigns it
+ * to the specified file descriptor (`newfd`).
+ *
+ * @param oldfd The file descriptor to duplicate. It must be a valid and open file
+ *              descriptor within the range of allocated descriptors.
+ * @param newfd The target file descriptor. If `newfd` is already in use, it will
+ *              be closed before duplication. If `newfd` exceeds the current file
+ *              descriptor table size, the table will be expanded to accommodate it.
+ *
+ * @return The value of `newfd` on success, or a negative value (e.g., -1) if an
+ *         error occurs.
+ *
+ * @see sys_dup()
+ */
 rt_err_t sys_dup2(int oldfd, int newfd)
 {
     struct dfs_fdtable *fdt = NULL;
     int ret = 0;
     int retfd = -1;
 
-    dfs_fd_lock();
+    dfs_file_lock();
     /* check old fd */
     fdt = dfs_fdtable_get();
     if ((oldfd < 0) || (oldfd >= fdt->maxfd))
@@ -517,11 +608,11 @@ rt_err_t sys_dup2(int oldfd, int newfd)
     fdt->fds[newfd]->ref_count++;
     retfd = newfd;
 exit:
-    dfs_fd_unlock();
+    dfs_file_unlock();
     return retfd;
 }
 
-static int fd_get_fd_index_form_fdt(struct dfs_fdtable *fdt, struct dfs_fd *file)
+static int fd_get_fd_index_form_fdt(struct dfs_fdtable *fdt, struct dfs_file *file)
 {
     int fd = -1;
 
@@ -530,7 +621,7 @@ static int fd_get_fd_index_form_fdt(struct dfs_fdtable *fdt, struct dfs_fd *file
         return -1;
     }
 
-    dfs_fd_lock();
+    dfs_file_lock();
 
     for(int index = 0; index < (int)fdt->maxfd; index++)
     {
@@ -541,12 +632,16 @@ static int fd_get_fd_index_form_fdt(struct dfs_fdtable *fdt, struct dfs_fd *file
         }
     }
 
-    dfs_fd_unlock();
+    dfs_file_unlock();
 
     return fd;
 }
 
-int fd_get_fd_index(struct dfs_fd *file)
+/**
+ * @brief get fd (index) by dfs file object.
+ *
+ */
+int fd_get_fd_index(struct dfs_file *file)
 {
     struct dfs_fdtable *fdt;
 
@@ -554,7 +649,22 @@ int fd_get_fd_index(struct dfs_fd *file)
     return fd_get_fd_index_form_fdt(fdt, file);
 }
 
-int fd_associate(struct dfs_fdtable *fdt, int fd, struct dfs_fd *file)
+/**
+ * @brief Associates a file descriptor with a file object.
+ *
+ * This function associates a given file descriptor (`fd`) with a specified
+ * file object (`file`) in the file descriptor table (`fdt`).
+ *
+ * @param fdt The file descriptor table to operate on. It must be a valid
+ *            and initialized `dfs_fdtable` structure.
+ * @param fd The file descriptor to associate. It must be within the range
+ *           of allocated file descriptors and currently unoccupied.
+ * @param file The file object to associate with the file descriptor. It must
+ *             be a valid and initialized `dfs_file` structure.
+ *
+ * @return The value of `fd` on success, or -1 if an error occurs.
+ */
+int fd_associate(struct dfs_fdtable *fdt, int fd, struct dfs_file *file)
 {
     int retfd = -1;
 
@@ -567,7 +677,7 @@ int fd_associate(struct dfs_fdtable *fdt, int fd, struct dfs_fd *file)
         return retfd;
     }
 
-    dfs_fd_lock();
+    dfs_file_lock();
     /* check old fd */
     if ((fd < 0) || (fd >= fdt->maxfd))
     {
@@ -583,11 +693,15 @@ int fd_associate(struct dfs_fdtable *fdt, int fd, struct dfs_fd *file)
     fdt->fds[fd] = file;
     retfd = fd;
 exit:
-    dfs_fd_unlock();
+    dfs_file_unlock();
     return retfd;
 }
 
-void fd_init(struct dfs_fd *fd)
+/**
+ * @brief initialize a dfs file object.
+ *
+ */
+void fd_init(struct dfs_file *fd)
 {
     if (fd)
     {
@@ -755,7 +869,7 @@ up_one:
 
     /* remove '/' in the end of path if exist */
     dst--;
-    if ((dst != fullpath) && (*dst == '/'))
+    if (dst > fullpath && (*dst == '/'))
         *dst = '\0';
 
     /* final check fullpath is not empty, for the special path of lwext "/.." */
@@ -796,11 +910,13 @@ struct dfs_fdtable *dfs_fdtable_get_pid(int pid)
     struct rt_lwp *lwp = RT_NULL;
     struct dfs_fdtable *fdt = RT_NULL;
 
-    lwp = lwp_from_pid(pid);
+    lwp_pid_lock_take();
+    lwp = lwp_from_pid_locked(pid);
     if (lwp)
     {
         fdt = &lwp->fdt;
     }
+    lwp_pid_lock_release();
 
     return fdt;
 }
@@ -826,7 +942,7 @@ int list_fd(void)
     rt_kprintf("-- ------  --- ----- ------\n");
     for (index = 0; index < (int)fd_table->maxfd; index++)
     {
-        struct dfs_fd *fd = fd_table->fds[index];
+        struct dfs_file *fd = fd_table->fds[index];
 
         if (fd && fd->vnode->fops)
         {
@@ -880,7 +996,7 @@ static int lsofp(int pid)
     rt_enter_critical();
     for (index = 0; index < (int)fd_table->maxfd; index++)
     {
-        struct dfs_fd *fd = fd_table->fds[index];
+        struct dfs_file *fd = fd_table->fds[index];
 
         if (fd && fd->vnode->fops)
         {
@@ -967,5 +1083,5 @@ MSH_CMD_EXPORT(lsof, list open files);
 #endif /* RT_USING_SMART */
 
 #endif
-/*@}*/
+/**@}*/
 

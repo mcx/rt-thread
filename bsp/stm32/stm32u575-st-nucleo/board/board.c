@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2021, RT-Thread Development Team
+ * Copyright (c) 2006-2023, RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -9,6 +9,19 @@
  */
 
 #include "board.h"
+
+#ifdef RT_USING_MEM_PROTECTION
+#include "mprotect.h"
+
+rt_mem_region_t static_regions[NUM_STATIC_REGIONS] = {
+  /* Flash region, read only */
+  {
+    .start = (void *)STM32_FLASH_START_ADRESS,
+    .size = (rt_size_t)STM32_FLASH_SIZE,
+    .attr = RT_MEM_REGION_P_RX_U_RX,
+  },
+};
+#endif
 
 void SystemClock_Config(void)
 {

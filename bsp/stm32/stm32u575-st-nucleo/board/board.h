@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2021, RT-Thread Development Team
+ * Copyright (c) 2006-2023, RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -41,6 +41,10 @@ extern int __bss_end;
 #endif
 
 #define HEAP_END                       STM32_SRAM1_END
+
+#ifdef RT_USING_MEM_PROTECTION
+#define NUM_STATIC_REGIONS 1
+#endif
 
 void SystemClock_Config(void);
 
