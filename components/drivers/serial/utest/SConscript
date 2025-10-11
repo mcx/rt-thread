@@ -1,11 +1,11 @@
+Import('rtconfig')
 from building import *
 
-cwd  = GetCurrentDir()
-src = []
-if GetDepend("RT_USING_SMP"):
-    src += Glob('*.c')
+cwd     = GetCurrentDir()
+src     = []
 CPPPATH = [cwd]
-group = DefineGroup('DeviceDrivers', src, depend = [''], CPPPATH = CPPPATH)
+
+group = DefineGroup('utestcases', src, depend = ['RT_USING_UTESTCASES', 'RT_USING_SERIAL'], CPPPATH = CPPPATH)
 
 list = os.listdir(cwd)
 for item in list:
